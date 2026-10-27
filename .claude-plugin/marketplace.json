@@ -1,0 +1,20 @@
+{
+  "name": "rafal-tools",
+  "description": "Rafal's Claude Code plugins.",
+  "owner": {
+    "name": "Rafal Musialski",
+    "email": "rafal.fb.acc@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "rafal-tools",
+      "source": "./plugins/rafal-tools",
+      "description": "Rafal's Claude Code tools. plugin-cost (/rafal-tools:plugin-cost): per-session token cost and real usage of every enabled plugin. task-tracker: multi-project task tracking with an HTML board, markdown-plan import, dependencies and cheap resume (/rafal-tools:task-tracker). security-audit (/rafal-tools:security-audit): phase-by-phase security audit of your own web, mobile and desktop apps, ending in a prioritized report.",
+      "version": "2.5.1",
+      "license": "MIT",
+      "author": {
+        "name": "Rafal Musialski"
+      }
+    }
+  ]
+}

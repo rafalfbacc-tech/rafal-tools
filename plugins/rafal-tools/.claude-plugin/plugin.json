@@ -1,0 +1,21 @@
+{
+  "name": "rafal-tools",
+  "description": "Rafal's Claude Code tools. plugin-cost (/rafal-tools:plugin-cost): per-session token cost and real usage of every enabled plugin. task-tracker (/rafal-tools:task-tracker): per-folder task tracking across projects with an HTML Kanban board, import of progress from markdown plans, task dependencies (also across projects), data kept outside the repos, and token-cheap resume of unfinished work. security-audit (/rafal-tools:security-audit): phase-by-phase security audit of your own web, mobile and desktop apps — recon, test plan, code scan with free scanners, localhost verification with role accounts, abuse/load checks, and a prioritized English report in .security/.",
+  "version": "2.5.1",
+  "license": "MIT",
+  "author": {
+    "name": "Rafal Musialski"
+  },
+  "keywords": [
+    "tools",
+    "tasks",
+    "kanban",
+    "progress",
+    "resume",
+    "project-management",
+    "board",
+    "security",
+    "audit",
+    "pentest"
+  ]
+}

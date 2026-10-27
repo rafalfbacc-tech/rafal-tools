@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Board</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f4f4f1; --surface: #fcfcfb; --raised: #ffffff;
+    --text: #0b0b0b; --text-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6; --accent-soft: #cde2fb;
+    --st-todo: #898781; --st-progress: #2a78d6; --st-blocked: #d03b3b; --st-done: #0ca30c;
+    --track: #ecebe6;
+    --shadow: 0 1px 2px rgba(11,11,11,.05), 0 2px 8px rgba(11,11,11,.04);
+    --shadow-hover: 0 2px 4px rgba(11,11,11,.06), 0 8px 24px rgba(11,11,11,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --raised: #232321;
+      --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --accent: #3987e5; --accent-soft: #184f95;
+      --st-progress: #3987e5;
+      --track: #2c2c2a;
+      --shadow: none; --shadow-hover: 0 0 0 1px rgba(255,255,255,.14);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --raised: #232321;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --accent-soft: #184f95;
+    --st-progress: #3987e5;
+    --track: #2c2c2a;
+    --shadow: none; --shadow-hover: 0 0 0 1px rgba(255,255,255,.14);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 24px 24px 48px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+  .label { color: var(--text-2); font-size: 12px; font-weight: 500; }
+  .muted { color: var(--muted); }
+  svg { display: block; }
+
+  /* header */
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; margin-bottom: 20px; }
+  .title-block { flex: 1 1 320px; min-width: 0; }
+  .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  h1 { margin: 2px 0 2px; font-size: 26px; font-weight: 650; letter-spacing: -.01em; }
+  .path { font-size: 12px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input[type=search], select { font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; min-width: 0; }
+  input[type=search] { width: 200px; }
+  input:focus-visible, select:focus-visible, button:focus-visible, .card:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+  .toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-2);
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); cursor: pointer; }
+  button { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 9px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+  .seg button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 7px; background: transparent;
+    padding: 5px 8px; font-size: 12px; color: var(--text-2); }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--page); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+  .seg svg { width: 14px; height: 14px; flex: none; }
+
+  /* overview */
+  .overview { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); gap: 12px; margin-bottom: 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .hero { padding: 18px 20px; }
+  .hero-value { font-size: 52px; font-weight: 650; line-height: 1; letter-spacing: -.02em; margin: 6px 0 4px; }
+  .hero-sub { color: var(--text-2); font-size: 13px; }
+  .stack { display: flex; gap: 2px; height: 12px; margin: 16px 0 10px; border-radius: 6px; overflow: hidden; background: var(--track); }
+  .stack > div { height: 100%; min-width: 4px; cursor: default; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .tile { padding: 16px 18px; display: flex; flex-direction: column; gap: 2px; justify-content: center; }
+  .tile .head { display: flex; align-items: center; gap: 8px; }
+  .tile .value { font-size: 30px; font-weight: 650; line-height: 1.1; }
+  .tile .foot { font-size: 12px; color: var(--muted); }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .chart { padding: 16px 18px 14px; min-width: 0; }
+  .chart h3, .help h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .chart .sub { font-size: 12px; color: var(--muted); margin: 2px 0 12px; }
+  .meters { display: flex; flex-direction: column; gap: 12px; max-height: 236px; overflow-y: auto; padding-right: 4px; }
+  .meter-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; }
+  .meter-row .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meter-row .val { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .meter { grid-column: 1 / -1; display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--track); }
+  .meter > div { height: 100%; }
+  .empty-chart { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+  /* help */
+  .help { padding: 0; margin-bottom: 20px; }
+  .help summary { list-style: none; cursor: pointer; padding: 14px 18px; display: flex; align-items: center; gap: 10px; }
+  .help summary::-webkit-details-marker { display: none; }
+  .help summary .chev { margin-left: auto; transition: transform .15s; color: var(--muted); }
+  .help[open] summary .chev { transform: rotate(90deg); }
+  .help-body { padding: 0 18px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .step { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .step .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--text); font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .step p { margin: 4px 0 0; color: var(--text-2); font-size: 13px; }
+  code, .code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: var(--page);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
+
+  /* board */
+  .board-bar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 10px; }
+  .board-bar button { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+  .board-bar button[aria-pressed="true"] { color: var(--text); border-color: var(--accent); }
+  .board-bar svg { width: 14px; height: 14px; flex: none; }
+  /* Columns share the width; a collapsed column shrinks to a narrow strip with a vertical label. */
+  .board { display: flex; gap: 12px; align-items: stretch; }
+  .board > .col { flex: 1 1 0; min-width: 0; }
+  .board > .col.collapsed { flex: 0 0 48px; padding: 12px 6px; }
+  .col { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; min-height: 160px; }
+  .col-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 12px; cursor: pointer; user-select: none; }
+  .col-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+  .col-toggle { border: 0; background: transparent; padding: 2px; margin: -2px 0 -2px -4px; color: var(--muted); display: inline-grid; place-items: center; }
+  .col-toggle svg { width: 14px; height: 14px; transition: transform .15s; transform: rotate(90deg); }
+  .col.collapsed .col-toggle svg { transform: none; }
+  .col.collapsed .col-head { flex-direction: column; padding: 2px 0; }
+  .col.collapsed .col-toggle { margin: 0; }
+  .col.collapsed .col-head h2 { writing-mode: vertical-rl; }
+  .col.collapsed .col-head .pill { margin-left: 0; padding: 1px 5px; }
+  .col.collapsed .col-body { display: none; }
+  .archive { margin-top: 12px; min-height: 0; }
+  .archive .col-head { cursor: default; flex-wrap: wrap; }
+  .archive .col-head .note { font-size: 12px; color: var(--muted); }
+  .archive .col-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 0 12px; }
+  .archive .card { opacity: .75; }
+  .archive .card:hover, .archive .card:focus-visible { opacity: 1; }
+  .chip.arch { border-style: dashed; }
+  .pill { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 10px; background: var(--page);
+    color: var(--text-2); border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .col-head .pill { margin-left: auto; }
+  .ico { width: 16px; height: 16px; flex: none; }
+  .card { position: relative; background: var(--raised); border: 1px solid var(--border); border-radius: 11px;
+    padding: 11px 12px 10px 15px; margin-bottom: 8px; cursor: pointer; box-shadow: var(--shadow);
+    transition: box-shadow .15s, transform .15s; overflow: hidden; }
+  .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
+  .card:hover { box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+  .card .top { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); }
+  .card .tid { font-family: ui-monospace, Consolas, monospace; }
+  .card .title { font-weight: 550; margin: 3px 0 6px; line-height: 1.35; }
+  .card .next { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; }
+  .card .next .arrow { color: var(--muted); flex: none; }
+  .card .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .chip { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--page); color: var(--text-2);
+    border: 1px solid var(--border); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stale { color: var(--st-blocked); }
+  .chip.dep { display: inline-flex; align-items: center; gap: 4px; background: transparent; color: var(--text); }
+  .chip.dep svg { width: 11px; height: 11px; flex: none; }
+  .chip.wait { border-color: var(--st-blocked); }
+  .chip.ready { border-color: var(--st-done); }
+  .card.waiting { opacity: .8; }
+  .card.waiting:hover, .card.waiting:focus-visible { opacity: 1; }
+  .deps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 16px 0 4px; }
+  .deps h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  .dep-link { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; margin-bottom: 6px;
+    background: var(--raised); border-radius: 9px; font-size: 13px; }
+  .dep-link .tid { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--muted); flex: none; }
+  .dep-link .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .warn { margin: 0 0 10px; font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--st-blocked); display: flex; gap: 8px; align-items: flex-start; }
+  .warn svg { width: 14px; height: 14px; flex: none; margin-top: 3px; }
+  .col-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 18px 6px; border: 1px dashed var(--border); border-radius: 10px; }
+  .more { width: 100%; font-size: 12px; color: var(--text-2); }
+
+  /* dialog */
+  dialog { width: min(780px, calc(100vw - 32px)); max-height: 88vh; border: 1px solid var(--border);
+    border-radius: 16px; background: var(--surface); color: var(--text); padding: 0; }
+  dialog::backdrop { background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface); z-index: 1; }
+  .dlg-head .grow { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px 3px 8px;
+    border-radius: 12px; border: 1px solid var(--border); background: var(--page); }
+  .dlg-body { padding: 4px 22px 22px; }
+  .resume { margin: 16px 0 4px; padding: 14px 16px; border-radius: 12px; background: var(--raised);
+    border: 1px solid var(--border); border-left: 4px solid var(--accent); }
+  .resume.alt { border-left-color: var(--muted); }
+  .resume h4 { margin: 0 0 6px; font-size: 13px; }
+  .resume ol { margin: 0 0 10px; padding-left: 18px; color: var(--text-2); font-size: 13px; }
+  .cmd { display: flex; gap: 8px; align-items: stretch; margin-top: 6px; }
+  .cmd .code { flex: 1; padding: 7px 10px; display: block; }
+  .md h1 { font-size: 19px; margin: 18px 0 8px; }
+  .md h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 0 6px; }
+  .md ul { margin: 0; padding-left: 20px; }
+  .md li { margin: 2px 0; }
+  .md p { margin: 6px 0; }
+
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--raised); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: var(--shadow-hover);
+    opacity: 0; transition: opacity .1s; white-space: nowrap; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+  @media (max-width: 1100px) {
+    .overview { grid-template-columns: minmax(0, 1fr); }
+    .charts { grid-template-columns: 1fr; }
+    /* Narrow screens stack the columns in a grid; a collapsed column keeps only its header row. */
+    .board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+    .board > .col.collapsed { padding: 12px; min-height: 0; }
+    .col.collapsed .col-head { flex-direction: row; padding: 2px 4px; }
+    .col.collapsed .col-toggle { margin: -2px 0 -2px -4px; }
+    .col.collapsed .col-head h2 { writing-mode: horizontal-tb; }
+    .col.collapsed .col-head .pill { margin-left: auto; padding: 1px 8px; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 16px 16px 32px; }
+    .board { grid-template-columns: 1fr; }
+    input[type=search] { width: 100%; }
+    .controls { width: 100%; }
+    .controls > * { flex: 1 1 auto; }
+    .hero-value { font-size: 44px; }
+  }
+</style>
+<script>
+  // Apply the saved theme before first paint, so the page never flashes the other theme.
+  try { const th = localStorage.getItem('tt-theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th; } catch {}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="title-block">
+      <div class="eyebrow">Task board</div>
+      <h1 id="heading">All projects</h1>
+      <div class="path" id="path"></div>
+    </div>
+    <div class="controls">
+      <select id="project" aria-label="Project"><option value="">All projects</option></select>
+      <input id="q" type="search" placeholder="Search tasks…" aria-label="Search tasks">
+      <select id="group" aria-label="Filter by group"><option value="">All groups</option></select>
+      <label class="toggle"><input type="checkbox" id="auto"> Auto-refresh</label>
+      <div class="seg" id="theme" role="group" aria-label="Color theme"></div>
+    </div>
+  </header>
+
+  <section class="overview" aria-label="Summary">
+    <div class="panel hero">
+      <div class="label">Completion</div>
+      <div class="hero-value" id="hero">0%</div>
+      <div class="hero-sub" id="hero-sub"></div>
+      <div class="stack" id="stack" role="img"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="tiles">
+    <div class="panel tile" id="tile-progress"></div>
+    <div class="panel tile" id="tile-todo"></div>
+    <div class="panel tile" id="tile-blocked"></div>
+    <div class="panel tile" id="tile-done"></div>
+    </div>
+  </section>
+
+  <section class="charts">
+    <div class="panel chart">
+      <h3 id="meters-title">Progress by group</h3>
+      <div class="sub">Share of tasks per status · done first</div>
+      <div class="meters" id="meters"></div>
+    </div>
+    <div class="panel chart">
+      <h3>Completed per day</h3>
+      <div class="sub" id="activity-sub">Last 14 days · imported tasks excluded</div>
+      <div id="activity"></div>
+    </div>
+  </section>
+
+  <details class="panel help" id="help">
+    <summary>
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6"/></svg>
+      <h3>How to resume work on To do / In progress tasks</h3>
+      <svg class="ico chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+    </summary>
+    <div class="help-body">
+      <div class="step"><span class="n">1</span><strong>Open the project</strong>
+        <p>Start Claude Code in the project folder (or any subfolder). The tracker prints the open tasks automatically at session start, so nothing needs to be pasted.</p></div>
+      <div class="step"><span class="n">2</span><strong>Pick what to continue</strong>
+        <p><code>continue</code> resumes the first <em>In progress</em> task. <code>resume T-003</code> resumes a specific one; for a <em>To do</em> task say <code>start T-005</code>. Tasks marked <em>Waits for</em> can start only after their dependencies are done; pick a <em>Ready</em> one instead.</p></div>
+      <div class="step"><span class="n">3</span><strong>Claude loads only that task</strong>
+        <p>It reads that single task file (goal, notes, next steps, log), tells you the next step and carries on. Done tasks and the rest of the plan are not reloaded.</p></div>
+      <div class="step"><span class="n">4</span><strong>Blocked tasks</strong>
+        <p>Tell Claude what changed, e.g. <code>T-004 is unblocked: API key is in .env</code>. It moves the task back to In progress and continues.</p></div>
+      <div class="step"><span class="n">5</span><strong>One-click command</strong>
+        <p>Click any open card and copy its <em>Resume</em> command: it opens Claude Code in the right folder with the resume prompt.</p></div>
+    </div>
+  </details>
+
+  <div class="board-bar">
+    <button type="button" id="archive-toggle" aria-pressed="false" aria-controls="archive">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="3" rx="1"/><path d="M2.75 5.75v6.5a1 1 0 0 0 1 1h8.5a1 1 0 0 0 1-1v-6.5M6.5 8.5h3"/></svg>
+      <span id="archive-label">Show archive</span>
+    </button>
+  </div>
+  <main class="board" id="board"></main>
+  <section class="col archive" id="archive" aria-label="Archived tasks" hidden></section>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <div class="dlg-head">
+    <span class="status-pill" id="dlg-status"></span>
+    <span class="grow" id="dlg-title"></span>
+    <button id="dlg-close">Close</button>
+  </div>
+  <div class="dlg-body">
+    <div id="dlg-resume"></div>
+    <div id="dlg-deps"></div>
+    <div class="md" id="dlg-body"></div>
+  </div>
+</dialog>
+<div id="tip" role="tooltip"></div>
+
+<script>
+const DATA = /*__DATA__*/null || { generated: '', projects: [] };
+const ALL = DATA.projects.flatMap((p) => p.tasks.map((t) => ({ ...t, project: p.slug, projectName: p.name, projectPath: p.path })));
+
+const ICONS = {
+  todo: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="var(--st-todo)" stroke-width="1.8" stroke-dasharray="2.6 2"/>',
+  'in-progress': '<circle cx="8" cy="8" r="5.5" fill="none" stroke="var(--st-progress)" stroke-width="1.8"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="var(--st-progress)"/>',
+  blocked: '<circle cx="8" cy="8" r="6.2" fill="var(--st-blocked)"/><path d="M5 8h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+  done: '<circle cx="8" cy="8" r="6.2" fill="var(--st-done)"/><path d="m5.2 8.2 1.9 1.9 3.8-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+const STATUS = {
+  todo: { label: 'To do', color: '--st-todo' },
+  'in-progress': { label: 'In progress', color: '--st-progress' },
+  blocked: { label: 'Blocked', color: '--st-blocked' },
+  done: { label: 'Done', color: '--st-done' },
+};
+const BOARD_ORDER = ['todo', 'in-progress', 'blocked', 'done'];
+const STACK_ORDER = ['done', 'in-progress', 'blocked', 'todo']; // red never touches green
+const DONE_LIMIT = 12;
+
+// A dep is "T-004" (same project) or "<slug>:T-004" (another project); a task waits until all are done.
+// Archived tasks are ignored on both sides: they hold nothing up and wait for nothing.
+const BY_KEY = new Map(ALL.map((t) => [t.project + '/' + t.id, t]));
+const depKey = (t, ref) => (ref.includes(':') ? ref.replace(':', '/') : t.project + '/' + ref);
+const depTask = (t, ref) => BY_KEY.get(depKey(t, ref));
+const taskLabel = (x, from) => (x.project === from.project ? x.id : `${x.projectName}:${x.id}`);
+const waitsFor = (t) => (t.status === 'done' || t.archived ? []
+  : (t.deps || []).map((d) => depTask(t, d)).filter((x) => x && !x.archived && x.status !== 'done'));
+const blocksOf = (t) => (t.archived ? [] : ALL.filter((x) => !x.archived && (x.deps || []).some((d) => depKey(x, d) === t.project + '/' + t.id)));
+const isReady = (t) => t.status === 'todo' && !t.archived && !waitsFor(t).length;
+const LOCK = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1.2" fill="var(--st-blocked)"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="var(--st-blocked)" stroke-width="1.3"/></svg>';
+const PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.5v7l6-3.5z" fill="var(--st-done)"/></svg>';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+const icon = (s) => `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true">${ICONS[s]}</svg>`;
+const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+const parseTs = (s) => (s ? new Date(s.replace(' ', 'T')) : null);
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function ago(s) {
+  const d = parseTs(s);
+  if (!d) return '';
+  const mins = Math.round((Date.now() - d) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.round(mins / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.round(h / 24);
+  return days < 30 ? `${days}d ago` : s.slice(0, 10);
+}
+const daysSince = (s) => { const d = parseTs(s); return d ? (Date.now() - d) / 86400000 : 0; };
+
+function md(src) {
+  let html = '', inList = false;
+  const close = () => { if (inList) { html += '</ul>'; inList = false; } };
+  for (const line of src.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
+    let m;
+    if ((m = line.match(/^(#{1,3}) (.*)/))) { close(); html += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; }
+    else if ((m = line.match(/^\s*- (.*)/))) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${inline(m[1])}</li>`; }
+    else if (line.trim()) { close(); html += `<p>${inline(line)}</p>`; }
+    else close();
+  }
+  close();
+  return html;
+}
+
+// ---------- tooltip ----------
+// data-tip holds tooltip HTML whose user parts are already esc()-ed. The attribute is escaped once more,
+// because dataset decodes one level of entities before the HTML reaches innerHTML.
+const tipAttr = (html) => `data-tip="${esc(html)}"`;
+const tip = $('tip');
+function bindTip(root) {
+  root.querySelectorAll('[data-tip]').forEach((el) => {
+    el.addEventListener('mousemove', (e) => {
+      tip.innerHTML = el.dataset.tip;
+      tip.style.opacity = 1;
+      const w = tip.offsetWidth;
+      tip.style.left = Math.min(e.clientX + 12, innerWidth - w - 8) + 'px';
+      tip.style.top = e.clientY - 38 + 'px';
+    });
+    el.addEventListener('mouseleave', () => (tip.style.opacity = 0));
+  });
+}
+
+// ---------- state ----------
+const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
+const selProject = () => $('project').value;
+const inProject = () => ALL.filter((t) => !selProject() || t.project === selProject());
+function visible() {
+  const q = $('q').value.toLowerCase(), g = $('group').value;
+  return inProject().filter((t) => (!g || t.group === g) &&
+    (!q || `${t.id} ${t.title} ${t.group} ${t.body}`.toLowerCase().includes(q)));
+}
+
+// ---------- header + overview ----------
+function renderHeader() {
+  const p = DATA.projects.find((x) => x.slug === selProject());
+  $('heading').textContent = p ? p.name : 'All projects';
+  document.title = `${p ? p.name : 'All projects'} · Task Board`;
+  $('path').textContent = (p ? `${p.path} · ` : `${DATA.projects.length} tracked project(s) · `) +
+    (DATA.generated ? `updated ${DATA.generated}` : '');
+  const keep = $('group').value;
+  $('group').innerHTML = '<option value="">All groups</option>' +
+    [...new Set(inProject().map((t) => t.group).filter(Boolean))].sort().map((g) => `<option>${esc(g)}</option>`).join('');
+  $('group').value = [...$('group').options].some((o) => o.value === keep) ? keep : '';
+}
+
+function counts(tasks) {
+  const c = { todo: 0, 'in-progress': 0, blocked: 0, done: 0 };
+  tasks.forEach((t) => c[t.status]++);
+  return c;
+}
+
+function renderOverview(tasks) {
+  const c = counts(tasks), total = tasks.length;
+  $('hero').textContent = `${pct(c.done, total)}%`;
+  $('hero-sub').textContent = total ? `${c.done} of ${total} tasks done` : 'No tasks yet';
+  $('stack').setAttribute('aria-label', STACK_ORDER.map((s) => `${STATUS[s].label} ${c[s]}`).join(', '));
+  $('stack').innerHTML = STACK_ORDER.filter((s) => c[s]).map((s) =>
+    `<div style="flex:${c[s]};background:var(${STATUS[s].color})" ${tipAttr(`<strong>${STATUS[s].label}</strong> · ${c[s]} (${pct(c[s], total)}%)`)}></div>`).join('');
+  $('legend').innerHTML = STACK_ORDER.map((s) =>
+    `<span><i class="sw" style="background:var(${STATUS[s].color})"></i>${STATUS[s].label} ${c[s]}</span>`).join('');
+  bindTip($('stack'));
+
+  const stale = tasks.filter((t) => t.status === 'in-progress' && daysSince(t.updated) > 3).length;
+  const weekDone = tasks.filter((t) => t.status === 'done' && !t.imported && daysSince(t.completed || t.updated) <= 7).length;
+  const tile = (id, s, value, foot) => {
+    $(id).innerHTML = `<div class="head">${icon(s)}<span class="label">${STATUS[s].label}</span></div>
+      <div class="value">${value}</div><div class="foot">${foot}</div>`;
+  };
+  tile('tile-progress', 'in-progress', c['in-progress'], stale ? `<span class="stale">${stale} untouched for 3+ days</span>` : 'Being worked on');
+  const ready = tasks.filter(isReady).length;
+  tile('tile-todo', 'todo', c.todo, c.todo ? `${ready} ready · ${c.todo - ready} waiting on dependencies` : 'Nothing queued');
+  tile('tile-blocked', 'blocked', c.blocked, c.blocked ? 'Need input to continue' : 'Nothing blocked');
+  tile('tile-done', 'done', c.done, `${weekDone} completed in the last 7 days`);
+}
+
+// ---------- charts ----------
+function renderMeters(tasks) {
+  const byProject = !selProject() && DATA.projects.length > 1;
+  $('meters-title').textContent = byProject ? 'Progress by project' : 'Progress by group';
+  const key = (t) => (byProject ? t.projectName : t.group || 'Ungrouped');
+  const groups = new Map();
+  tasks.forEach((t) => { if (!groups.has(key(t))) groups.set(key(t), []); groups.get(key(t)).push(t); });
+  if (!groups.size) { $('meters').innerHTML = '<div class="empty-chart">No tasks to show</div>'; return; }
+  const rows = [...groups].map(([name, ts]) => ({ name, c: counts(ts), total: ts.length }))
+    .sort((a, b) => (b.c.done / b.total) - (a.c.done / a.total) || b.total - a.total);
+  $('meters').innerHTML = rows.map(({ name, c, total }) => `
+    <div class="meter-row">
+      <span class="name" title="${esc(name)}">${esc(name)}</span>
+      <span class="val">${c.done}/${total} · ${pct(c.done, total)}%</span>
+      <div class="meter" role="img" aria-label="${esc(name)}: ${STACK_ORDER.map((s) => `${STATUS[s].label} ${c[s]}`).join(', ')}">
+        ${STACK_ORDER.filter((s) => c[s]).map((s) => `<div style="flex:${c[s]};background:var(${STATUS[s].color})"
+          ${tipAttr(`<strong>${esc(name)}</strong> · ${STATUS[s].label} ${c[s]}`)}></div>`).join('')}
+      </div>
+    </div>`).join('');
+  bindTip($('meters'));
+}
+
+function renderActivity(tasks) {
+  const DAYS = 14, today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = [...Array(DAYS)].map((_, i) => { const d = new Date(today); d.setDate(d.getDate() - (DAYS - 1 - i)); return d; });
+  const counts = new Map(days.map((d) => [dayKey(d), 0]));
+  tasks.filter((t) => t.status === 'done' && !t.imported).forEach((t) => {
+    const d = parseTs(t.completed || t.updated);
+    if (d && counts.has(dayKey(d))) counts.set(dayKey(d), counts.get(dayKey(d)) + 1);
+  });
+  const vals = [...counts.values()], sum = vals.reduce((a, b) => a + b, 0);
+  $('activity-sub').textContent = `Last 14 days · ${sum} completed · imported tasks excluded`;
+
+  const W = 560, H = 200, L = 28, R = 8, T = 12, B = 26;
+  const max = Math.max(2, ...vals);
+  const step = max <= 4 ? 1 : Math.ceil(max / 4);
+  const top = Math.ceil(max / step) * step;
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  const band = (W - L - R) / DAYS, bw = Math.min(24, band * 0.62);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Tasks completed per day over the last 14 days, ${sum} in total">`;
+  for (let v = 0; v <= top; v += step) {
+    svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${v ? 'var(--grid)' : 'var(--axis)'}" stroke-width="1"/>
+      <text x="${L - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)" style="font-variant-numeric:tabular-nums">${v}</text>`;
+  }
+  days.forEach((d, i) => {
+    const v = vals[i], x = L + band * i + (band - bw) / 2, h = y(0) - y(v);
+    const label = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    if (v) {
+      const r = Math.min(4, h, bw / 2);
+      svg += `<path d="M${x},${y(0)} V${y(v) + r} Q${x},${y(v)} ${x + r},${y(v)} H${x + bw - r} Q${x + bw},${y(v)} ${x + bw},${y(v) + r} V${y(0)} Z" fill="var(--st-done)"/>`;
+    }
+    svg += `<rect x="${L + band * i}" y="${T}" width="${band}" height="${H - T - B}" fill="transparent" ${tipAttr(`<strong>${esc(label)}</strong> · ${v} completed`)}/>`;
+    if (i % 2 === (DAYS - 1) % 2) svg += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${d.getDate()}.${d.getMonth() + 1}</text>`;
+  });
+  svg += '</svg>';
+  $('activity').innerHTML = svg;
+  bindTip($('activity'));
+}
+
+// ---------- board ----------
+let showAllDone = false;
+function cardHtml(t) {
+  const many = !selProject();
+  const stale = t.status === 'in-progress' && daysSince(t.updated) > 3;
+  const next = t.status !== 'done' && t.next && t.next.length
+    ? `<div class="next"><span class="arrow">→</span><span>${inline(t.next[0])}${t.next.length > 1 ? ` <span class="muted">+${t.next.length - 1}</span>` : ''}</span></div>` : '';
+  const summary = t.status === 'done' && t.summary
+    ? `<div class="next"><span>${inline(t.summary.length > 120 ? t.summary.slice(0, 120) + '…' : t.summary)}</span></div>` : '';
+  const waits = waitsFor(t);
+  const openBlocks = blocksOf(t).filter((x) => x.status !== 'done').length;
+  const depChips =
+    (waits.length ? `<span class="chip dep wait" title="Can start after these are done">${LOCK}Waits for ${esc(waits.map((x) => taskLabel(x, t)).join(', '))}</span>` : '') +
+    (isReady(t) && (t.deps || []).length ? `<span class="chip dep ready" title="All dependencies are done">${PLAY}Ready</span>` : '') +
+    (t.status !== 'done' && openBlocks ? `<span class="chip" title="Open tasks that depend on this one">Blocks ${openBlocks}</span>` : '');
+  const arch = t.archived ? `<span class="chip arch" title="Archived ${esc(t.archived)}">${esc(STATUS[t.status].label)} · archived</span>` : '';
+  const chips = arch + depChips + [many ? t.projectName : '', t.group].filter(Boolean).map((c) => `<span class="chip" title="${esc(c)}">${esc(c)}</span>`).join('');
+  return `<div class="card${waits.length ? ' waiting' : ''}" style="--c: var(${STATUS[t.status].color})" data-key="${esc(t.project + '/' + t.id)}" tabindex="0" role="button" aria-label="${esc(t.id + ' ' + t.title)}">
+    <div class="top"><span class="tid">${esc(t.id)}</span><span class="${stale ? 'stale' : ''}" title="${esc(t.updated)}">${t.archived ? 'archived ' + ago(t.archived) : t.status === 'done' ? 'done ' + ago(t.completed || t.updated) : ago(t.updated)}</span></div>
+    <div class="title">${esc(t.title)}</div>${next}${summary}
+    ${chips ? `<div class="chips">${chips}</div>` : ''}
+  </div>`;
+}
+
+// Collapsed columns and the archive toggle are remembered per browser.
+const collapsed = new Set((() => { try { return JSON.parse(store('tt-collapsed')) || []; } catch { return []; } })());
+let showArchive = store('tt-archive') === '1';
+const CHEV = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>';
+
+function toggleColumn(s) {
+  if (collapsed.has(s)) collapsed.delete(s);
+  else collapsed.add(s);
+  store('tt-collapsed', JSON.stringify([...collapsed]));
+  renderBoard(visible().filter((t) => !t.archived));
+  const b = $('board').querySelector(`.col[data-status="${s}"] .col-toggle`);
+  if (b) b.focus();
+}
+
+function renderBoard(tasks) {
+  $('board').innerHTML = BOARD_ORDER.map((s) => {
+    let items = tasks.filter((t) => t.status === s);
+    items.sort(s === 'done'
+      ? (a, b) => (b.completed || b.updated).localeCompare(a.completed || a.updated)
+      : (a, b) => (waitsFor(a).length > 0) - (waitsFor(b).length > 0) || b.updated.localeCompare(a.updated));
+    const total = items.length;
+    if (s === 'done' && !showAllDone) items = items.slice(0, DONE_LIMIT);
+    const more = s === 'done' && total > items.length
+      ? `<button class="more" id="more-done">Show all ${total} done tasks</button>` : '';
+    const shut = collapsed.has(s);
+    return `<section class="col${shut ? ' collapsed' : ''}" data-status="${s}" aria-label="${STATUS[s].label}">
+      <div class="col-head"><button type="button" class="col-toggle" aria-expanded="${!shut}" aria-label="${shut ? 'Expand' : 'Collapse'} ${STATUS[s].label}" title="${shut ? 'Expand' : 'Collapse'}">${CHEV}</button>${icon(s)}<h2>${STATUS[s].label}</h2><span class="pill">${total}</span></div>
+      <div class="col-body">${items.map(cardHtml).join('') || '<div class="col-empty">Nothing here</div>'}${more}</div>
+    </section>`;
+  }).join('');
+  const m = $('more-done');
+  if (m) m.addEventListener('click', () => { showAllDone = true; renderBoard(visible().filter((t) => !t.archived)); });
+}
+
+function renderArchive(tasks) {
+  $('archive-label').textContent = `${showArchive ? 'Hide' : 'Show'} archive (${tasks.length})`;
+  $('archive-toggle').setAttribute('aria-pressed', String(showArchive));
+  $('archive').hidden = !showArchive;
+  if (!showArchive) return;
+  const items = [...tasks].sort((a, b) => b.archived.localeCompare(a.archived));
+  $('archive').innerHTML = `<div class="col-head">${$('archive-toggle').querySelector('svg').outerHTML.replace('<svg', '<svg class="ico"')}<h2>Archive</h2>
+      <span class="note">hidden from the board and charts · ignored by dependencies</span><span class="pill">${items.length}</span></div>
+    <div class="col-body">${items.map(cardHtml).join('') || '<div class="col-empty">No archived tasks</div>'}</div>`;
+}
+
+// Archived tasks stay out of the counts, charts and columns; they appear only in the archive section.
+function renderAll() {
+  const all = visible(), tasks = all.filter((t) => !t.archived);
+  renderOverview(tasks);
+  renderMeters(tasks);
+  renderActivity(tasks);
+  renderBoard(tasks);
+  renderArchive(all.filter((t) => t.archived));
+}
+
+// ---------- dialog ----------
+const openCard = (el) => openTask(BY_KEY.get(el.dataset.key));
+const cmdBox = (cmd) => `<div class="cmd"><span class="code">${esc(cmd)}</span><button type="button" class="copy" data-cmd="${esc(cmd)}">Copy</button></div>`;
+
+function depLinks(title, list, from) {
+  if (!list.length) return '';
+  return `<div><h4>${title}</h4>${list.map((x) => `<button class="dep-link" data-key="${esc(x.project + '/' + x.id)}">
+    ${icon(x.status)}<span class="tid">${esc(taskLabel(x, from))}</span><span class="t">${esc(x.title)}</span>${x.archived ? '<span class="muted" style="margin-left:auto;font-size:11px">archived</span>' : ''}</button>`).join('')}</div>`;
+}
+
+function openTask(t) {
+  if (!t) return;
+  const deps = (t.deps || []).map((d) => depTask(t, d)).filter(Boolean);
+  const waits = waitsFor(t);
+  $('dlg-deps').innerHTML = deps.length || blocksOf(t).length
+    ? `<div class="deps">${depLinks('Depends on', deps, t)}${depLinks('Blocks', blocksOf(t), t)}</div>` : '';
+  $('dlg-deps').querySelectorAll('.dep-link').forEach((b) => b.addEventListener('click', () => openTask(BY_KEY.get(b.dataset.key))));
+  $('dlg-status').innerHTML = `${icon(t.status)}${STATUS[t.status].label}`;
+  $('dlg-title').textContent = `${t.projectName} · ${t.id} · updated ${ago(t.updated)}`;
+  // Archive / unarchive run the tracker CLI directly, so no Claude session is needed.
+  const ttCmd = (verb) => `cd "${t.projectPath}"; node "${DATA.cli}" ${verb} ${t.id}`;
+  const archiveBox = `<div class="resume alt">
+      <h4>Archive this task</h4>
+      <ol><li>Hides it from the board, the lists and the session-start summary; tasks that depend on it stop waiting for it.</li>
+        <li>Run the command in a terminal, then reload the board. <code>unarchive</code> restores it.</li></ol>
+      ${cmdBox(ttCmd('archive'))}
+    </div>`;
+  if (t.archived) {
+    $('dlg-resume').innerHTML = `<div class="resume alt">
+      <h4>Archived ${esc(ago(t.archived))}</h4>
+      <ol><li>Hidden from the board, the lists and the session-start summary.</li>
+        <li>Tasks that depend on it no longer wait for it.</li>
+        <li>To bring it back, run the command below in a terminal (or say <code>${esc(`unarchive ${t.id}`)}</code> to Claude), then reload the board.</li></ol>
+      ${cmdBox(ttCmd('unarchive'))}
+    </div>`;
+  } else if (t.status === 'done') {
+    $('dlg-resume').innerHTML = archiveBox;
+  } else {
+    const verb = t.status === 'todo' ? 'Start' : 'Resume';
+    const prompt = t.status === 'blocked'
+      ? `${t.id} is unblocked: <what changed>. Resume it.`
+      : `${verb} task ${t.id} (task-tracker)`;
+    const cmd = `cd "${t.projectPath}"; claude "${prompt}"`;
+    $('dlg-resume').innerHTML = `<div class="resume">
+      <h4>${t.status === 'blocked' ? 'Unblock and resume this task' : `${verb} this task`}</h4>
+      ${waits.length ? `<div class="warn">${LOCK}<span>Waits for <strong>${esc(waits.map((x) => taskLabel(x, t)).join(', '))}</strong>. Finish ${waits.length > 1 ? 'those' : 'that'} first: Claude refuses to start this task until its dependencies are done, unless you insist.</span></div>` : ''}
+      <ol>
+        <li>Open Claude Code in <code>${esc(t.projectPath)}</code> (or run the command below).</li>
+        <li>Say <code>${esc(prompt)}</code>${t.status === 'blocked' ? ', replacing the placeholder with what was unblocked' : ''}.</li>
+        <li>Claude loads only this task file and continues from <em>Next steps</em>.</li>
+      </ol>
+      ${cmdBox(cmd)}
+    </div>${archiveBox}`;
+  }
+  $('dlg-resume').querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.cmd); b.textContent = 'Copied'; }
+    catch { const r = document.createRange(); r.selectNodeContents(b.previousElementSibling); getSelection().removeAllRanges(); getSelection().addRange(r); b.textContent = 'Press Ctrl+C'; }
+  }));
+  $('dlg-body').innerHTML = md(t.body || `# ${t.title}`);
+  if (!$('dlg').open) $('dlg').showModal();
+  $('dlg').scrollTop = 0;
+}
+
+// ---------- theme ----------
+// System (default) follows the OS; Light / Dark override it. The choice is remembered per browser.
+const THEMES = [
+  ['system', 'System', '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1.5"/><path d="M5.5 13.75h5M8 11.25v2.5"/></svg>'],
+  ['light', 'Light', '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>'],
+  ['dark', 'Dark', '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/></svg>'],
+];
+const currentTheme = () => document.documentElement.dataset.theme || 'system';
+
+function setTheme(mode) {
+  if (mode === 'system') {
+    delete document.documentElement.dataset.theme;
+    try { localStorage.removeItem('tt-theme'); } catch {}
+  } else {
+    document.documentElement.dataset.theme = mode;
+    store('tt-theme', mode);
+  }
+  $('theme').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+}
+
+function initTheme() {
+  $('theme').innerHTML = THEMES.map(([mode, label, svg]) =>
+    `<button type="button" data-mode="${mode}" title="${label} theme">${svg}${label}</button>`).join('');
+  $('theme').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setTheme(b.dataset.mode); });
+  setTheme(currentTheme());
+}
+
+// ---------- init ----------
+function init() {
+  DATA.projects.forEach((p) => $('project').insertAdjacentHTML('beforeend',
+    `<option value="${esc(p.slug)}">${esc(p.name)}${p.enabled ? '' : ' (paused)'}</option>`));
+  const known = (s) => DATA.projects.some((p) => p.slug === s);
+  const fromHash = decodeURIComponent(location.hash.slice(1));
+  $('project').value = known(fromHash) ? fromHash : known(store('tt-project')) ? store('tt-project') : '';
+  renderHeader();
+  const g = store('tt-group');
+  if (g && [...$('group').options].some((o) => o.value === g)) $('group').value = g;
+  $('auto').checked = store('tt-auto') === '1';
+  $('help').open = store('tt-help') !== 'closed';
+
+  $('project').addEventListener('change', () => {
+    store('tt-project', selProject());
+    history.replaceState(null, '', selProject() ? `#${selProject()}` : location.pathname);
+    renderHeader();
+    renderAll();
+  });
+  $('q').addEventListener('input', renderAll);
+  $('group').addEventListener('change', () => { store('tt-group', $('group').value); renderAll(); });
+  $('auto').addEventListener('change', () => store('tt-auto', $('auto').checked ? '1' : '0'));
+  initTheme();
+  $('help').addEventListener('toggle', () => store('tt-help', $('help').open ? 'open' : 'closed'));
+  setInterval(() => { if ($('auto').checked && !$('dlg').open && !document.hidden) location.reload(); }, 15000);
+
+  $('archive-toggle').addEventListener('click', () => {
+    showArchive = !showArchive;
+    store('tt-archive', showArchive ? '1' : '0');
+    renderArchive(visible().filter((t) => t.archived));
+  });
+  $('board').addEventListener('click', (e) => {
+    const h = e.target.closest('.col-head');
+    if (h) return toggleColumn(h.closest('.col').dataset.status);
+  });
+  for (const el of [$('board'), $('archive')]) {
+    el.addEventListener('click', (e) => { const c = e.target.closest('.card'); if (c) openCard(c); });
+    el.addEventListener('keydown', (e) => { const c = e.target.closest('.card'); if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openCard(c); } });
+  }
+  $('dlg-close').addEventListener('click', () => $('dlg').close());
+  $('dlg').addEventListener('click', (e) => { if (e.target === $('dlg')) $('dlg').close(); });
+  renderAll();
+}
+init();
+</script>
+</body>
+</html>

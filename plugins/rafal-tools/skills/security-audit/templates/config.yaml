@@ -1,0 +1,38 @@
+# security-audit config for this app.
+# TEST ACCOUNTS ON A LOCAL/TEST DATABASE ONLY. Never real or production credentials.
+# This file must stay out of git (.security/ is added to .gitignore by init).
+# Supported syntax: nested "key: value" maps, "- item" lists, quotes and comments.
+
+app:
+  base_url: http://localhost:3000
+  start_command: npm run dev          # how to start the app locally
+  health_url: http://localhost:3000/  # answers when the app is up
+
+# Hosts dynamic tests may hit. Exact host names only; never production.
+scope:
+  - localhost
+  - 127.0.0.1
+
+database:
+  # Command that backs up the TEST database before data-changing tests. Examples:
+  #   pg_dump -Fc mydb -f .security/backup.dump
+  #   mysqldump mydb > .security/backup.sql
+  #   copy of the SQLite file, e.g. cp data/app.db .security/backup.db
+  backup_command: ""
+
+depth: standard  # quick | standard | deep
+
+# One account per role. Findings refer to roles only; passwords are never printed.
+accounts:
+  - role: admin
+    username: admin@test.local
+    password: "change-me"
+  - role: user
+    username: user@test.local
+    password: "change-me"
+  - role: tenant-b-user  # user of a second tenant/organization, for isolation tests
+    username: other@test.local
+    password: "change-me"
+  - role: guest  # unauthenticated; leave username/password empty
+    username: ""
+    password: ""
