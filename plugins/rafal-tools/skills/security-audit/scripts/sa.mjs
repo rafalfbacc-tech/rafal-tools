@@ -13,7 +13,8 @@ const SKILL_DIR = path.dirname(path.dirname(SCRIPT));
 const TEMPLATE = path.join(SKILL_DIR, 'templates', 'config.yaml');
 const PHASES = ['init', 'plan', 'scan', 'verify', 'stress', 'report'];
 const REQUIRED_PHASES = ['init', 'plan', 'scan', 'verify', 'report']; // stress is optional
-const CMD = '/rafal-tools:security-audit';
+// Inside the rafal-tools plugin the skill is a namespaced slash command; a standalone package is just "security-audit".
+const CMD = fs.existsSync(path.join(SKILL_DIR, '..', '..', '.claude-plugin', 'plugin.json')) ? '/rafal-tools:security-audit' : 'security-audit';
 
 // ---------- helpers ----------
 const slash = (p) => p.replace(/\\/g, '/');

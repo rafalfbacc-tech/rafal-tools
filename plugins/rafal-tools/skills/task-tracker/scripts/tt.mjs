@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const STATUSES = ['todo', 'in-progress', 'blocked', 'done'];
@@ -34,12 +35,74 @@ function die(msg) {
   process.exit(1);
 }
 
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const BUSY = ['EPERM', 'EBUSY', 'EACCES'];
+
+// On Windows a rename fails while another process still reads the target, so retry briefly.
 function writeAtomic(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, content, 'utf8');
-  fs.renameSync(tmp, file);
+  for (let i = 0; ; i++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      if (i >= 20 || !BUSY.includes(e.code)) {
+        fs.rmSync(tmp, { force: true });
+        throw e;
+      }
+      sleepMs(15);
+    }
+  }
 }
+
+// ---------- write lock ----------
+// Every write is read-modify-write on index.json, so parallel sessions, subagents and chain agents
+// must take turns. The lock is one file for the whole data folder (dependencies span projects).
+const LOCK_WAIT_MS = 10000;
+const LOCK_STALE_MS = 30000; // a crashed process must not lock the tracker forever
+let heldLock = null;
+// Task files created before the index is saved; removed again when the command fails.
+const pendingFiles = [];
+
+function withLock(fn) {
+  if (heldLock) return fn();
+  const lock = path.join(HOME, '.lock');
+  fs.mkdirSync(HOME, { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST' && !BUSY.includes(e.code)) throw e;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.rmSync(lock, { force: true });
+      } catch {}
+      if (Date.now() > deadline) die(`the tracker data is locked by another process (${slash(lock)}); try again`);
+      sleepMs(20 + Math.floor(Math.random() * 30));
+    }
+  }
+  heldLock = lock;
+  try {
+    return fn();
+  } finally {
+    releaseLock();
+  }
+}
+
+function releaseLock() {
+  if (!heldLock) return;
+  try { fs.rmSync(heldLock, { force: true }); } catch {}
+  heldLock = null;
+}
+
+// die() exits without running finally blocks, so clean up here as well.
+process.on('exit', () => {
+  for (const f of pendingFiles.splice(0)) try { fs.rmSync(f, { force: true }); } catch {}
+  releaseLock();
+});
 
 const readJson = (file, fallback) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback);
 const writeJson = (file, obj) => writeAtomic(file, JSON.stringify(obj, null, 2) + '\n');
@@ -130,6 +193,9 @@ function normId(id) {
   return m ? `T-${m[1].padStart(3, '0')}` : String(id);
 }
 
+// Numeric order: as text, T-1000 would sort before T-999.
+const idNum = (id) => Number(String(id).replace(/\D/g, '')) || 0;
+
 function getTask(index, id) {
   id = normId(id);
   const t = index.tasks.find((x) => x.id === id);
@@ -138,7 +204,35 @@ function getTask(index, id) {
 }
 
 // On/off flags never take a value, so `start --force T-003` keeps T-003 as the task id.
-const BOOLEAN_FLAGS = new Set(['force', 'all', 'ready', 'items', 'full', 'keep-old', 'archived']);
+const BOOLEAN_FLAGS = new Set(['force', 'all', 'ready', 'items', 'full', 'keep-old', 'archived', 'start']);
+
+// Flags each command accepts. Anything else is rejected, so a typo like --sumary cannot silently
+// drop the text that follows it.
+const COMMAND_FLAGS = {
+  init: ['name'],
+  scan: ['items', 'limit'],
+  add: ['goal', 'group', 'next', 'dep', 'status', 'summary', 'source', 'start'],
+  bulk: ['group'],
+  start: ['force'],
+  status: ['note', 'summary', 'force'],
+  done: ['note', 'summary'],
+  log: ['next', 'note'],
+  show: ['full'],
+  resume: ['all'],
+  list: ['all', 'ready', 'archived'],
+  move: ['keep-old'],
+};
+
+function checkFlags(cmd, flags) {
+  const allowed = COMMAND_FLAGS[cmd] || [];
+  for (const [key, val] of Object.entries(flags)) {
+    if (!allowed.includes(key)) {
+      die(`unknown flag --${key} for \`${cmd}\`${allowed.length ? ` (allowed: ${allowed.map((f) => `--${f}`).join(', ')})` : ''}. ` +
+        'Put a bare -- before text that starts with "--".');
+    }
+    if (!BOOLEAN_FLAGS.has(key) && [].concat(val).includes(true)) die(`flag --${key} needs a value`);
+  }
+}
 
 // Parse argv into positionals and --flags (repeatable flags become arrays). A bare `--` ends the
 // flags, so text that starts with "--" can still be passed: `log T-1 -- "--verbose fixed"`.
@@ -336,16 +430,57 @@ ${next}
 
 // ---------- mutations ----------
 function mutate(c, fn) {
-  const { config, index } = load(c);
-  const out = fn(index, config);
-  writeJson(c.indexFile, index);
-  touchActivity(c);
-  render();
-  return out;
+  return withLock(() => {
+    const { config, index } = load(c);
+    const out = fn(index, config);
+    writeJson(c.indexFile, index);
+    pendingFiles.length = 0;
+    touchActivity(c);
+    render();
+    return out;
+  });
 }
 
+// ---------- turn markers ----------
+// The hooks compare three timestamps: when the turn began (.turn), when a project file was last
+// edited (.dirty) and when the tracker was last written (.activity). They are kept per session, so
+// parallel sessions in one project do not disturb each other. The CLI learns the session from
+// CLAUDE_CODE_SESSION_ID; without it only the shared .activity file is written.
+const safeSid = (sid) => String(sid || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+const CLI_SESSION = safeSid(process.env.CLAUDE_CODE_SESSION_ID);
+const markerFile = (c, name, sid) => (sid ? path.join(c.base, '.sessions', `${sid}.${name}`) : path.join(c.base, `.${name}`));
+const mtimeOf = (file) => {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
+// Present once the CLI has seen a session id here: from then on the hooks trust per-session activity.
+const cliKnowsSession = (c) => path.join(c.base, '.sessions', 'cli-knows-session');
+
 function touchActivity(c) {
-  writeAtomic(path.join(c.base, '.activity'), now());
+  writeAtomic(markerFile(c, 'activity'), now());
+  if (!CLI_SESSION) return;
+  writeAtomic(markerFile(c, 'activity', CLI_SESSION), now());
+  if (!fs.existsSync(cliKnowsSession(c))) writeAtomic(cliKnowsSession(c), now());
+}
+
+// Last tracker write of this session. Falls back to the shared marker while the CLI cannot tell
+// which session it runs in (another session's write then also counts).
+const lastActivity = (c, sid) =>
+  sid && fs.existsSync(cliKnowsSession(c)) ? mtimeOf(markerFile(c, 'activity', sid)) : mtimeOf(markerFile(c, 'activity'));
+
+const SESSION_MARKER_DAYS = 7;
+function pruneSessionMarkers(c) {
+  const dir = path.join(c.base, '.sessions');
+  if (!fs.existsSync(dir)) return;
+  const limit = Date.now() - SESSION_MARKER_DAYS * 86400000;
+  for (const name of fs.readdirSync(dir)) {
+    const f = path.join(dir, name);
+    if (f !== cliKnowsSession(c) && mtimeOf(f) < limit) fs.rmSync(f, { force: true });
+  }
 }
 
 function editTaskFile(c, t, fn) {
@@ -366,13 +501,17 @@ function moveForStatus(c, t) {
   if (t.status !== 'done' && fs.existsSync(arch) && !fs.existsSync(open)) fs.renameSync(arch, open);
 }
 
-function addTask(c, index, { title, goal, group, next, status, summary, source, deps }) {
+function addTask(c, index, { title, goal, group, next, status, summary, source, deps, mustBeReady }) {
   if (!title) die('missing title');
   status = status || 'todo';
   if (!STATUSES.includes(status)) die(`bad status "${status}" (use ${STATUSES.join(', ')})`);
   const id = `T-${String(index.nextId).padStart(3, '0')}`;
   deps = [...new Set((deps || []).map((d) => normDep(d, c.project.slug)))];
   checkDeps(index, id, deps);
+  if (mustBeReady) {
+    const waits = deps.map((d) => resolveDep(index, d)).filter((r) => r.task.status !== 'done');
+    if (waits.length) die(`cannot --start: the new task would wait for ${waits.map((r) => `${r.label} [${r.task.status}]`).join(', ')}. Add it without --start.`);
+  }
   index.nextId++;
   const ts = now();
   const t = {
@@ -385,7 +524,9 @@ function addTask(c, index, { title, goal, group, next, status, summary, source, 
     ...(deps.length ? { deps } : {}),
   };
   index.tasks.push(t);
-  writeAtomic(path.join(status === 'done' ? c.archiveDir : c.tasksDir, `${id}.md`), taskTemplate(t, goal));
+  const file = path.join(status === 'done' ? c.archiveDir : c.tasksDir, `${id}.md`);
+  pendingFiles.push(file);
+  writeAtomic(file, taskTemplate(t, goal));
   return t;
 }
 
@@ -408,7 +549,7 @@ function openTasks(index) {
     t.status === 'in-progress' ? 0 : t.status === 'blocked' ? 1 : waitingOn(index, t).length ? 3 : 2;
   return index.tasks
     .filter((t) => t.status !== 'done' && !t.archived)
-    .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
+    .sort((a, b) => rank(a) - rank(b) || idNum(a.id) - idNum(b.id));
 }
 
 const isReady = (index, t) => t.status === 'todo' && !t.archived && !waitingOn(index, t).length;
@@ -445,7 +586,11 @@ const PLUGIN_VERSION = (() => {
   try {
     return JSON.parse(fs.readFileSync(path.join(SKILL_DIR, '..', '..', '.claude-plugin', 'plugin.json'), 'utf8')).version || '0';
   } catch {
-    return '0';
+    try {
+      return fs.readFileSync(path.join(SKILL_DIR, 'VERSION'), 'utf8').trim() || '0'; // standalone package
+    } catch {
+      return '0';
+    }
   }
 })();
 
@@ -553,45 +698,59 @@ function readStdin() {
   }
 }
 
+// True when `file` lies inside the project folder. Edits elsewhere (memory files, temp folders)
+// are not project work and must not trigger the stop check.
+function insideProject(c, file, cwd) {
+  const f = normPath(path.resolve(cwd || process.cwd(), file));
+  const root = normPath(c.root);
+  return f === root || f.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+}
+
 function hook(kind) {
   const input = readStdin();
-  let c;
+  let c, config, index;
   try {
     const p = findProject(input.cwd || process.cwd());
     if (!p) return;
     c = ctxFor(p);
-    if (load(c).config.enabled === false) return;
+    ({ config, index } = load(c));
+    if (config.enabled === false) return;
   } catch {
     return; // never break the session because of the tracker
   }
-  const { config, index } = load(c);
+  const sid = safeSid(input.session_id);
+  const turnFile = markerFile(c, 'turn', sid);
+  const dirtyFile = markerFile(c, 'dirty', sid);
 
   if (kind === 'session-start') {
     try { render(); } catch {}
+    try { pruneSessionMarkers(c); } catch {}
     console.log(resumeText(c, index, config));
   } else if (kind === 'prompt') {
-    const turnFile = path.join(c.base, '.turn');
-    const actFile = path.join(c.base, '.activity');
-    // Remind only when the previous turn recorded nothing; a diligent session pays no per-prompt tokens.
-    const lastTurn = fs.existsSync(turnFile) ? fs.statSync(turnFile).mtimeMs : 0;
-    const lastAct = fs.existsSync(actFile) ? fs.statSync(actFile).mtimeMs : 0;
+    // Remind only when the previous turn changed files and recorded nothing (the stop check was
+    // interrupted or bypassed); a diligent session pays no per-prompt tokens.
+    const lastTurn = mtimeOf(turnFile);
+    const unrecorded = lastTurn && mtimeOf(dirtyFile) >= lastTurn && lastActivity(c, sid) < lastTurn;
     writeAtomic(turnFile, now());
     try { renderIfStale(); } catch {}
-    if (lastAct < lastTurn) console.log('[task-tracker] Record this request as task(s): add/start/log/next/done, or skip.');
+    if (unrecorded) console.log('[task-tracker] The last turn changed files but recorded nothing. Record it now: add/start/log/done, or skip.');
+  } else if (kind === 'edit') {
+    // PostToolUse on file-editing tools: remember that this turn changed the project.
+    const file = input.tool_input && (input.tool_input.file_path || input.tool_input.notebook_path);
+    if (file && !insideProject(c, String(file), input.cwd)) return;
+    writeAtomic(dirtyFile, now());
   } else if (kind === 'stop') {
+    // Block only when this turn edited project files and wrote nothing to the tracker.
+    // Questions and read-only turns end without any tracker call.
     if (input.stop_hook_active) return;
-    const turnFile = path.join(c.base, '.turn');
-    const actFile = path.join(c.base, '.activity');
-    if (!fs.existsSync(turnFile)) return;
-    const turn = fs.statSync(turnFile).mtimeMs;
-    const act = fs.existsSync(actFile) ? fs.statSync(actFile).mtimeMs : 0;
-    if (act >= turn) return;
+    const turn = mtimeOf(turnFile);
+    if (!turn || mtimeOf(dirtyFile) < turn || lastActivity(c, sid) >= turn) return;
     console.log(
       JSON.stringify({
         decision: 'block',
         reason:
-          `[task-tracker] Nothing recorded this turn. Run log/next (or done) on the task(s) you worked on, ` +
-          `or skip if there was no task work. CLI: ${TT}`,
+          `[task-tracker] Files changed this turn but nothing was recorded. Run log (or done) on the task(s) you worked on, ` +
+          `or skip if it was not task work. CLI: ${TT}`,
       })
     );
   }
@@ -611,7 +770,8 @@ Data: ${slash(HOME)}  (from ${HOME_SOURCE})
                                     --items also lists unchecked items with line numbers
   off | on                          Pause / resume tracking (data is kept)
   projects                          All tracked projects with task counts
-  add "Title" [--goal ".."] [--group ".."] [--next ".."]... [--dep ID]... [--status s] [--summary ".."] [--source ".."]
+  add "Title" [--goal ".."] [--group ".."] [--next ".."]... [--dep ID]... [--start] [--status s] [--summary ".."] [--source ".."]
+                                    --start creates the task already in progress (refused when it would wait)
   bulk <file.json> [--group ".."]   Add many tasks (skips ones whose title+group already exist):
                                     [{"title","goal","group","status","next":[..],"deps":["#1","T-004"],"summary","source"}]
                                     deps: "#n" = n-th item of the file, a task ID, or an exact task title
@@ -624,7 +784,9 @@ Data: ${slash(HOME)}  (from ${HOME_SOURCE})
   archive <ID>... | unarchive <ID>...  Hide tasks (any status) from lists and the board; archived
                                     tasks no longer hold up the tasks that depend on them
   summary <ID> "text"               Set the "Work done" description
-  log <ID> "message"                Append to the progress log
+  log <ID> "message" [--next "step"]... [--note ".."]
+                                    Append to the progress log; --next replaces the Next steps list
+                                    and --note appends to Notes in the same call
   note <ID> "text"                  Append durable context to Notes
   next <ID> "step" ["step" ...]     Replace the Next steps list
   goal <ID> "text"                  Replace the Goal section
@@ -632,10 +794,15 @@ Data: ${slash(HOME)}  (from ${HOME_SOURCE})
   show <ID>                         Print one task file (use this to resume a task)
   resume [--all]                    Compact list of open tasks (todo capped at resumeLimit unless --all)
   list [--all|--ready|--archived]   List tasks (open only; --all everything; --ready startable todo)
-  skip                              Mark this turn as needing no task update
+  skip                              Mark this turn's file changes as needing no task update
   render                            Rebuild the board
   open                              Open the board (filtered to this project when inside one)
-  hook <session-start|prompt|stop>  Used by Claude Code hooks`;
+  chain new "Name" ["Description"]  Add an 8-stage role chain (Opus, Codex, Sonnet, Haiku) as dependent tasks
+  chain run ["Name"]                Lead a chain in your own terminal; each stage starts after you confirm it
+  chain brief <ID>                  Print the instructions for a chain agent
+  hook <session-start|prompt|edit|stop>  Used by Claude Code hooks
+
+Unknown flags are rejected. Put a bare -- before text that starts with "--": log T-001 -- "--verbose fixed"`;
 
 // User-facing overview, shown when the skill is invoked without arguments.
 function usageText() {
@@ -676,6 +843,12 @@ Dependencies
   "T-005 depends on shop:T-002"      Task in another tracked project (project name or folder name)
   Waiting tasks are not started early; finishing a task announces what became ready.
 
+Role chains (Windows Terminal; run these in your own terminal)
+  tt chain new "Name" ["Description"]  Assumptions, review, decisions, implementation, test run,
+                                     code review, fixes and assessment as 8 dependent tasks
+  tt chain run ["Name"]              Each stage opens an agent in its own tab after you confirm it
+  In the commands above, tt means: ${TT}
+
 Board
   "open the board"                   Kanban board with charts, all projects, resume commands;
                                      columns collapse, "Show archive" reveals archived tasks
@@ -709,10 +882,16 @@ function setSummary(c, t, text) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === 'chain') {
+    const chainScript = path.join(path.dirname(SCRIPT), 'chain.mjs');
+    process.exitCode = spawnSync(process.execPath, [chainScript, ...rest], { stdio: 'inherit' }).status ?? 1;
+    return;
+  }
   const { pos, flags } = parseArgs(rest);
+  checkFlags(cmd, flags);
 
   switch (cmd) {
-    case 'init': {
+    case 'init': withLock(() => {
       const dir = path.resolve(pos[0] || process.cwd());
       if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) die(`no such directory: ${dir}`);
       const reg = loadRegistry();
@@ -741,8 +920,8 @@ async function main() {
       console.log(`${existed ? 'Re-enabled' : 'Started'} task tracking for "${config.project}" (${slash(dir)})`);
       console.log(`Data: ${slash(c.base)}`);
       if (!existed) console.log(`Next: import existing progress -> ${TT} scan "${slash(dir)}" --items`);
+    });
       break;
-    }
     case 'usage': {
       console.log(usageText());
       break;
@@ -828,7 +1007,7 @@ async function main() {
       break;
     }
     case 'off':
-    case 'on': {
+    case 'on': withLock(() => {
       const c = ctx();
       const config = readJson(c.configFile, {});
       config.enabled = cmd === 'on';
@@ -836,17 +1015,19 @@ async function main() {
       touchActivity(c);
       render();
       console.log(`Task tracking ${config.enabled ? 'enabled' : 'paused'} for "${config.project}"`);
+    });
       break;
-    }
     case 'add': {
       const c = ctx();
+      if (flags.start && str(flags.status) && flags.status !== 'in-progress') die('--start cannot be combined with another --status');
       const t = mutate(c, (index) =>
         addTask(c, index, {
           title: pos.join(' '),
           goal: str(flags.goal),
           group: str(flags.group),
           next: asList(flags.next),
-          status: str(flags.status) || undefined,
+          status: flags.start ? 'in-progress' : str(flags.status) || undefined,
+          mustBeReady: !!flags.start,
           summary: str(flags.summary),
           source: str(flags.source),
           deps: asList(flags.dep),
@@ -1011,17 +1192,20 @@ async function main() {
       const c = ctx();
       const text = pos.slice(1).join(' ');
       if (!text) die(`usage: ${cmd} <ID> "text"`);
+      const steps = asList(flags.next);
       const t = mutate(c, (index) => {
         const t = getTask(index, pos[0]);
         t.updated = now();
-        editTaskFile(c, t, (md) =>
-          cmd === 'log'
-            ? appendToSection(md, 'Progress log', `- ${t.updated} — ${text}`)
-            : appendToSection(md, 'Notes', `- ${text}`)
-        );
+        if (steps.length) t.next = steps;
+        editTaskFile(c, t, (md) => {
+          if (cmd === 'note') return appendToSection(md, 'Notes', `- ${text}`);
+          md = appendToSection(md, 'Progress log', `- ${t.updated} — ${text}`);
+          if (steps.length) md = setSection(md, 'Next steps', steps.map((s) => `- ${s}`).join('\n'));
+          return str(flags.note) ? appendToSection(md, 'Notes', `- ${flags.note}`) : md;
+        });
         return t;
       });
-      console.log(`${t.id}: ${cmd} recorded`);
+      console.log(`${t.id}: ${cmd} recorded${steps.length ? `, ${steps.length} next step(s) set` : ''}${str(flags.note) ? ', note added' : ''}`);
       break;
     }
     case 'next': {

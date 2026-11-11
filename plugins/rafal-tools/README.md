@@ -34,7 +34,7 @@ Tracks tasks and progress across many projects. It renders an HTML Kanban board 
 
 ### Features
 
-- **Opt-in per folder:** say "track this" (or "track C:\path\to\project") and every request in that folder becomes tracked work.
+- **Opt-in per folder:** say "track this" (or "track C:\path\to\project") and every request that changes that folder becomes tracked work.
 - **Import existing progress:** on first tracking, Claude scans the project's markdown files (checkboxes, `Status:` lines). It creates open tasks for unfinished work and done tasks with a "Work done" summary for finished work.
 - **Dependencies:** tasks can depend on other tasks (`tt dep`, or `"deps"` when importing a plan). A task waits until its dependencies are done, Claude will not start it early, and finishing a task announces what just became ready.
 - **One file per task:** an implementation plan with 9 tasks becomes 9 task files. On resume only the open-task list is loaded, plus the one task being continued.
@@ -46,8 +46,11 @@ Tracks tasks and progress across many projects. It renders an HTML Kanban board 
 | Hook | Behaviour (only in tracked folders) |
 |---|---|
 | SessionStart | Prints the compact list of open tasks so work can resume immediately |
-| UserPromptSubmit | Short reminder to record the request as task(s) |
-| Stop | Blocks once if no task update was recorded this turn |
+| UserPromptSubmit | Marks the start of the turn. Prints a short reminder only when the previous turn changed files and recorded nothing |
+| PostToolUse (Edit, Write, NotebookEdit) | Notes that the turn changed a file inside the project. Prints nothing |
+| Stop | Blocks once if the turn changed project files and recorded no task update. Questions and read-only turns end without any tracker call |
+
+The turn markers are kept per session, so parallel sessions in one project do not disturb each other. All writes take a lock on the data folder, so parallel sessions, subagents and chain agents cannot lose each other's updates.
 
 ### Resuming To do / In progress tasks
 
@@ -96,6 +99,27 @@ All screenshots below use sample data.
 ### Cross-project dependencies
 
 A task can wait for a task in another tracked project: `T-005 depends on backend:T-002`. The prefix is the project name or its folder name. Waiting tasks are not started early. Finishing the backend task announces that the frontend task is ready, and the board links both ways.
+
+### Role chains
+
+`tt chain new "Name" "Optional description"` adds eight dependent tasks, each with a model in its title:
+
+| Stage | Model |
+|---|---|
+| Assumptions | Opus |
+| Assumption review | Codex |
+| Review decisions | Opus |
+| Implementation, with tests for new behavior | Sonnet |
+| Test run and report | Haiku |
+| Code review | Codex |
+| Fixes | Sonnet |
+| Implementation assessment | Opus |
+
+Run `tt chain run "Name"` in your own terminal. After you confirm a stage, its agent opens in a tab of the `tt-chain` Windows Terminal window, where you can type and take over. When the agent runs `tt done`, the first terminal proposes the next stage. A blocked task stops the chain and shows the reason.
+
+Stage documents go to `docs/chain/<name>/`. The implementation and fixes stages commit on the current branch, so start from a separate branch. To add a stage, put the role in its title: `tt add "Fix [sonnet]: description" --group "chain: Name"`.
+
+Requirements: Windows Terminal, Claude Code and Codex, each signed in with your own account, and a tracker path with no spaces. Agents keep your usual permission settings. Claude gets a rule that allows only the chain and tracker scripts, and Codex gets write access to the tracker data folder. Usage counts against your plans, so check your provider's terms for scripted use.
 
 ### Archive
 

@@ -10,7 +10,7 @@ Run after a first `init`, or when the user asks to import or re-assess plans. Go
    - No markers, or markers that look stale → check cheaply with Grep/Glob for the files, functions or endpoints the task names. Never read whole modules.
    - Partially done → `in-progress`, with `next` naming what is missing.
    - Unsure → `todo`, plus a short note on what to check.
-5. **One `tt bulk` call.** Write the JSON to the scratchpad, never to the repo. Make one task per independent unit, use the plan's name as `group`, and set `source` to `file.md:LINE`:
+5. **One `tt bulk` call.** Write the JSON to a temp folder (scratchpad or OS temp), never to the repo. Make one task per independent unit, use the plan's name as `group`, and set `source` to `file.md:LINE`:
    ```json
    [
      {"title":"Add order endpoints","group":"Orders plan","status":"done","source":"docs/plan.md:12",
