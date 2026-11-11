@@ -786,7 +786,8 @@ Data: ${slash(HOME)}  (from ${HOME_SOURCE})
   summary <ID> "text"               Set the "Work done" description
   log <ID> "message" [--next "step"]... [--note ".."]
                                     Append to the progress log; --next replaces the Next steps list
-                                    and --note appends to Notes in the same call
+                                    and --note appends to Notes in the same call. Never changes the
+                                    status; on a ready todo task it prints a reminder to start it
   note <ID> "text"                  Append durable context to Notes
   next <ID> "step" ["step" ...]     Replace the Next steps list
   goal <ID> "text"                  Replace the Goal section
@@ -1193,10 +1194,14 @@ async function main() {
       const text = pos.slice(1).join(' ');
       if (!text) die(`usage: ${cmd} <ID> "text"`);
       const steps = asList(flags.next);
+      let hint = '';
       const t = mutate(c, (index) => {
         const t = getTask(index, pos[0]);
         t.updated = now();
         if (steps.length) t.next = steps;
+        // Agents often log work without `start`. Remind them instead of changing the status: a log may
+        // only record planning context, and `tt chain` treats in-progress tasks it did not launch as orphans.
+        if (cmd === 'log' && isReady(index, t)) hint = `${t.id} is still todo. If you are working on it, run: ${TT} start ${t.id}`;
         editTaskFile(c, t, (md) => {
           if (cmd === 'note') return appendToSection(md, 'Notes', `- ${text}`);
           md = appendToSection(md, 'Progress log', `- ${t.updated} — ${text}`);
@@ -1206,6 +1211,7 @@ async function main() {
         return t;
       });
       console.log(`${t.id}: ${cmd} recorded${steps.length ? `, ${steps.length} next step(s) set` : ''}${str(flags.note) ? ', note added' : ''}`);
+      if (hint) console.log(hint);
       break;
     }
     case 'next': {
