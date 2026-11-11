@@ -200,3 +200,17 @@ test('open tasks are listed in numeric id order', (t) => {
   s.tt('add', 'after');
   assert.deepEqual(s.tt('list').trim().split('\n'), ['T-999 [todo] before', 'T-1000 [todo] after']);
 });
+
+test('log on a todo task starts it, unless it waits for dependencies', (t) => {
+  const s = sandbox(t);
+  s.tt('add', 'Plan feature');
+  assert.match(s.tt('log', 'T-1', 'spec written'), /T-001 \[todo → in-progress\]: log recorded/);
+  assert.match(s.tt('show', '1'), /\*\*Status:\*\* in-progress[\s\S]*Status todo → in-progress[\s\S]*spec written/);
+  s.tt('add', 'Later', '--dep', 'T-1');
+  assert.doesNotMatch(s.tt('log', 'T-2', 'thought about it'), /in-progress/);
+  assert.match(s.tt('show', '2'), /\*\*Status:\*\* todo/);
+  s.tt('note', 'T-2', 'just a note');
+  s.tt('status', 'T-1', 'blocked');
+  s.tt('log', 'T-1', 'still stuck');
+  assert.match(s.tt('show', '1'), /\*\*Status:\*\* blocked/);
+});

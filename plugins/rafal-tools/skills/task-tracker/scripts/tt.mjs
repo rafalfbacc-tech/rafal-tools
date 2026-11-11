@@ -1193,19 +1193,24 @@ async function main() {
       const text = pos.slice(1).join(' ');
       if (!text) die(`usage: ${cmd} <ID> "text"`);
       const steps = asList(flags.next);
+      let started = false;
       const t = mutate(c, (index) => {
         const t = getTask(index, pos[0]);
         t.updated = now();
         if (steps.length) t.next = steps;
+        // Logging work on a ready todo task means it has started: agents often skip `start`.
+        started = cmd === 'log' && t.status === 'todo' && !t.archived && !waitingOn(index, t).length;
+        if (started) t.status = 'in-progress';
         editTaskFile(c, t, (md) => {
           if (cmd === 'note') return appendToSection(md, 'Notes', `- ${text}`);
+          if (started) md = appendToSection(md, 'Progress log', `- ${t.updated} — Status todo → in-progress`);
           md = appendToSection(md, 'Progress log', `- ${t.updated} — ${text}`);
           if (steps.length) md = setSection(md, 'Next steps', steps.map((s) => `- ${s}`).join('\n'));
           return str(flags.note) ? appendToSection(md, 'Notes', `- ${flags.note}`) : md;
         });
         return t;
       });
-      console.log(`${t.id}: ${cmd} recorded${steps.length ? `, ${steps.length} next step(s) set` : ''}${str(flags.note) ? ', note added' : ''}`);
+      console.log(`${t.id}${started ? ' [todo → in-progress]' : ''}: ${cmd} recorded${steps.length ? `, ${steps.length} next step(s) set` : ''}${str(flags.note) ? ', note added' : ''}`);
       break;
     }
     case 'next': {

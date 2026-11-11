@@ -32,7 +32,7 @@ No `[task-tracker]` notice: with hooks installed the folder is untracked, so do 
 
 ## 2. Record progress
 Use as few calls as possible; one per task per turn is usually enough. Unknown flags are rejected.
-1. Before working: `tt start <ID>`, or for a new task `tt add "Title" --goal ".." --start`. Both refuse tasks that wait for dependencies; use `tt start --force` only if the user insists.
+1. Before working: `tt start <ID>`, or for a new task `tt add "Title" --goal ".." --start`. Both refuse tasks that wait for dependencies; use `tt start --force` only if the user insists. A `tt log` on a ready todo task also starts it.
 2. Before ending a turn, for every task you touched: `tt log <ID> "what was done" --next "step" [--next ".."] [--note "durable context"]`. `--next` replaces the next steps, so make them concrete (files, functions, commands). `--note` keeps decisions and gotchas.
 3. Verified → `tt done <ID> --summary "what was built and where"`, then mention any tasks it reports as ready. Stuck → `tt status <ID> blocked --note "why"`.
 4. The stop hook checks only turns that edited project files. If those edits were not task work → `tt skip`.
