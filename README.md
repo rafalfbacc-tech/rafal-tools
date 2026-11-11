@@ -79,6 +79,7 @@ plugins/rafal-tools/
         ├── SKILL.md                   instructions Claude loads when the skill is used
         ├── references/                extra instructions, loaded only when needed
         ├── scripts/tt.mjs             CLI the skill drives
+        ├── scripts/chain.mjs          role chain behind `tt chain` (logic in chain-lib.mjs)
         └── templates/board.html       HTML board template
 ```
 
