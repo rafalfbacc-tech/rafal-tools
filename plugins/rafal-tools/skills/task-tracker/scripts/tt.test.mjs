@@ -201,16 +201,18 @@ test('open tasks are listed in numeric id order', (t) => {
   assert.deepEqual(s.tt('list').trim().split('\n'), ['T-999 [todo] before', 'T-1000 [todo] after']);
 });
 
-test('log on a todo task starts it, unless it waits for dependencies', (t) => {
+test('log never changes the status and reminds to start a ready todo task', (t) => {
   const s = sandbox(t);
   s.tt('add', 'Plan feature');
-  assert.match(s.tt('log', 'T-1', 'spec written'), /T-001 \[todo → in-progress\]: log recorded/);
-  assert.match(s.tt('show', '1'), /\*\*Status:\*\* in-progress[\s\S]*Status todo → in-progress[\s\S]*spec written/);
+  assert.match(s.tt('log', 'T-1', 'spec written'), /T-001: log recorded\nT-001 is still todo\. .* start T-001/);
+  assert.match(s.tt('show', '1'), /\*\*Status:\*\* todo[\s\S]*spec written/);
+  assert.doesNotMatch(s.tt('note', 'T-1', 'just a note'), /still todo/);
   s.tt('add', 'Later', '--dep', 'T-1');
-  assert.doesNotMatch(s.tt('log', 'T-2', 'thought about it'), /in-progress/);
-  assert.match(s.tt('show', '2'), /\*\*Status:\*\* todo/);
-  s.tt('note', 'T-2', 'just a note');
+  assert.doesNotMatch(s.tt('log', 'T-2', 'thought about it'), /still todo/);
+  s.tt('start', 'T-1');
+  assert.doesNotMatch(s.tt('log', 'T-1', 'working'), /still todo/);
   s.tt('status', 'T-1', 'blocked');
-  s.tt('log', 'T-1', 'still stuck');
+  assert.doesNotMatch(s.tt('log', 'T-1', 'still stuck'), /still todo/);
   assert.match(s.tt('show', '1'), /\*\*Status:\*\* blocked/);
+  assert.match(s.tt('show', '2'), /\*\*Status:\*\* todo/);
 });

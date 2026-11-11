@@ -786,7 +786,8 @@ Data: ${slash(HOME)}  (from ${HOME_SOURCE})
   summary <ID> "text"               Set the "Work done" description
   log <ID> "message" [--next "step"]... [--note ".."]
                                     Append to the progress log; --next replaces the Next steps list
-                                    and --note appends to Notes in the same call
+                                    and --note appends to Notes in the same call. Never changes the
+                                    status; on a ready todo task it prints a reminder to start it
   note <ID> "text"                  Append durable context to Notes
   next <ID> "step" ["step" ...]     Replace the Next steps list
   goal <ID> "text"                  Replace the Goal section
@@ -1193,24 +1194,24 @@ async function main() {
       const text = pos.slice(1).join(' ');
       if (!text) die(`usage: ${cmd} <ID> "text"`);
       const steps = asList(flags.next);
-      let started = false;
+      let hint = '';
       const t = mutate(c, (index) => {
         const t = getTask(index, pos[0]);
         t.updated = now();
         if (steps.length) t.next = steps;
-        // Logging work on a ready todo task means it has started: agents often skip `start`.
-        started = cmd === 'log' && t.status === 'todo' && !t.archived && !waitingOn(index, t).length;
-        if (started) t.status = 'in-progress';
+        // Agents often log work without `start`. Remind them instead of changing the status: a log may
+        // only record planning context, and `tt chain` treats in-progress tasks it did not launch as orphans.
+        if (cmd === 'log' && isReady(index, t)) hint = `${t.id} is still todo. If you are working on it, run: ${TT} start ${t.id}`;
         editTaskFile(c, t, (md) => {
           if (cmd === 'note') return appendToSection(md, 'Notes', `- ${text}`);
-          if (started) md = appendToSection(md, 'Progress log', `- ${t.updated} — Status todo → in-progress`);
           md = appendToSection(md, 'Progress log', `- ${t.updated} — ${text}`);
           if (steps.length) md = setSection(md, 'Next steps', steps.map((s) => `- ${s}`).join('\n'));
           return str(flags.note) ? appendToSection(md, 'Notes', `- ${flags.note}`) : md;
         });
         return t;
       });
-      console.log(`${t.id}${started ? ' [todo → in-progress]' : ''}: ${cmd} recorded${steps.length ? `, ${steps.length} next step(s) set` : ''}${str(flags.note) ? ', note added' : ''}`);
+      console.log(`${t.id}: ${cmd} recorded${steps.length ? `, ${steps.length} next step(s) set` : ''}${str(flags.note) ? ', note added' : ''}`);
+      if (hint) console.log(hint);
       break;
     }
     case 'next': {
